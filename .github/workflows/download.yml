@@ -1,0 +1,44 @@
+---
+name: download helix
+run-name: download helix-${{inputs.version}} from official release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        required: true
+        description: version to build (without "v")
+        default: "23.10"
+        type: string
+
+permissions: write-all
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: aarch64-macos
+            name: darwin-arm64
+          - platform: x86_64-macos
+            name: darwin-amd64
+          - platform: aarch64-linux
+            name: linux-arm64
+    name: Download ${{matrix.platform}}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+      - name: Download
+        run: |
+          curl -sSLf -o helix-v${{inputs.version}}-${{matrix.name}}.tar.xz "https://github.com/helix-editor/helix/releases/download/${{inputs.version}}/helix-${{inputs.version}}-${{matrix.platform}}.tar.xz"
+      - name: Upload ${{matrix.name}}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # create release if not exist
+          gh release create "v${{inputs.version}}" --notes "Release helix v${{inputs.version}}" --title "v${{inputs.version}}" --repo "${{github.repository}}" || true
+          # delete the asset if exists
+          gh release delete-asset "v${{inputs.version}}" "helix-v${{inputs.version}}-${{matrix.name}}.tar.xz" --yes --repo "${{github.repository}}" || true
+          gh release upload "v${{inputs.version}}" "./helix-v${{inputs.version}}-${{matrix.name}}.tar.xz" --repo "${{github.repository}}"
