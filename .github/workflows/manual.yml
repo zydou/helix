@@ -1,0 +1,94 @@
+---
+name: manual
+run-name: build ${{inputs.version}}
+env:
+  upstream: helix-editor/helix
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        required: true
+        description: version to build (without "v")
+        default: "23.10"
+        type: string
+
+permissions: write-all
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: aarch64-unknown-linux-musl, os: ubuntu-latest, cross: true}
+          - {target: aarch64-apple-darwin, os: macos-latest, cross: false}
+          - {target: x86_64-unknown-linux-musl, os: ubuntu-latest, cross: true}
+          - {target: x86_64-apple-darwin, os: macos-latest, cross: false}
+
+    name: Build ${{matrix.target}}
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO: cargo
+      RUST_BACKTRACE: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+        with:
+          repository: ${{env.upstream}}
+          ref: ${{inputs.version}}
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Install musl-gcc on Linux
+        if: matrix.os == 'ubuntu-latest' && ! matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Delete rust-toolchain.toml
+        run: |
+          [ -f "rust-toolchain.toml" ] && rm rust-toolchain.toml
+
+      - name: Install Cross
+        if: matrix.cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross.git
+          echo "CARGO=cross" >> $GITHUB_ENV
+
+      - name: Set profile.release.strip = true
+        shell: bash
+        run: |
+          mkdir -p $HOME/.cargo
+          cat >> $HOME/.cargo/config.toml <<EOF
+          [profile.release]
+          strip = true
+          EOF
+
+      - name: Build release binary
+        run: |-
+          cargo run --package=helix-loader --bin=hx-loader
+          ${{ env.CARGO }} build --release --locked --target ${{ matrix.target }}
+          rm -rf runtime/grammars/sources
+
+      - name: Upload ${{matrix.target}}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |-
+          mkdir -p helix-v${{inputs.version}}-${{matrix.target}}/contrib
+          mv "target/${{ matrix.target }}/release/hx" ./helix-v${{inputs.version}}-${{matrix.target}}/hx
+          mv runtime ./helix-v${{inputs.version}}-${{matrix.target}}/runtime
+          mv contrib/completion ./helix-v${{inputs.version}}-${{matrix.target}}/contrib/completion
+          tar -cJf "helix-v${{inputs.version}}-${{matrix.target}}.tar.xz" helix-v${{inputs.version}}-${{matrix.target}}
+          # create release if not exist
+          gh release create "v${{inputs.version}}" --notes "Release helix v${{inputs.version}}" --title "v${{inputs.version}}" --repo "${{github.repository}}" || true
+          # delete the asset if exists
+          gh release delete-asset "v${{inputs.version}}" "helix-v${{inputs.version}}-${{matrix.target}}.tar.xz" --yes --repo "${{github.repository}}" || true
+          gh release upload "v${{inputs.version}}" "./helix-v${{inputs.version}}-${{matrix.target}}.tar.xz" --repo "${{github.repository}}"
