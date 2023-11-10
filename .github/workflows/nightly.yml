@@ -1,0 +1,173 @@
+---
+name: nightly
+run-name: nightly build
+env:
+  upstream: helix-editor/helix
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/nightly.yml
+  schedule:
+    - cron: 45 23 * * *
+
+permissions: write-all
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  filter:
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.trigger-check.outputs.action }}
+      remote_sha: ${{ steps.meta.outputs.remote_sha }}
+    steps:
+      - uses: actions/checkout@main
+      - name: set meta info
+        id: meta
+        run: |
+          echo "remote_sha=$(git ls-remote https://github.com/${{env.upstream}}.git HEAD | awk '{ print $1}')" >> $GITHUB_OUTPUT
+
+      - name: check if we need to trigger a build
+        id: trigger-check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REMOTE_SHA: ${{ steps.meta.outputs.remote_sha }}
+        run: |
+          if ! gh api /repos/${{github.repository}}/branches/manifest > /dev/null 2>&1; then
+          echo "branch manifest not found. trigger a build"
+          echo "action=trigger" >> "$GITHUB_OUTPUT"
+          else
+          last_sha=$(curl -sSLf https://raw.githubusercontent.com/${{github.repository}}/manifest/manifest.json | jq -r '.remote_sha')
+          if [ "$last_sha" != "$REMOTE_SHA" ]; then
+          echo "remote_sha changed. trigger a build"
+          echo "action=trigger" >> "$GITHUB_OUTPUT"
+          else
+          echo "remote_sha not changed. skip"
+          echo "action=skip" >> "$GITHUB_OUTPUT"
+          fi
+          fi
+
+  build:
+    needs: filter
+    if: needs.filter.outputs.action == 'trigger'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: aarch64-unknown-linux-musl, os: ubuntu-latest, cross: true}
+          - {target: x86_64-unknown-linux-musl, os: ubuntu-latest, cross: true}
+          - {target: aarch64-apple-darwin, os: macos-latest, cross: false}
+          - {target: x86_64-apple-darwin, os: macos-latest, cross: false}
+
+    name: Build ${{matrix.target}}
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO: cargo
+      RUST_BACKTRACE: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+        with:
+          repository: ${{env.upstream}}
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Install musl-gcc on Linux
+        if: matrix.os == 'ubuntu-latest' && ! matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Delete rust-toolchain.toml
+        run: |
+          [ -f "rust-toolchain.toml" ] && rm rust-toolchain.toml
+
+      - name: Install Cross
+        if: matrix.cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross.git
+          echo "CARGO=cross" >> $GITHUB_ENV
+
+      - name: Set profile.release.strip = true
+        shell: bash
+        run: |
+          mkdir -p $HOME/.cargo
+          cat >> $HOME/.cargo/config.toml <<EOF
+          [profile.release]
+          strip = true
+          EOF
+
+      - name: Build release binary
+        run: |-
+          cargo run --package=helix-loader --bin=hx-loader
+          ${{ env.CARGO }} build --release --locked --target ${{ matrix.target }}
+          rm -rf runtime/grammars/sources
+
+      - name: Set full and short ref
+        env:
+          FULL_REF: ${{ needs.filter.outputs.remote_sha }}
+        run: |
+          echo "short_ref=${FULL_REF:0:7}" >> $GITHUB_ENV
+          echo "full_ref=$FULL_REF" >> $GITHUB_ENV
+
+      - name: Upload ${{matrix.target}}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |-
+          mkdir -p helix-${{matrix.target}}/contrib
+          mv "target/${{ matrix.target }}/release/hx" ./helix-${{matrix.target}}/hx
+          mv runtime ./helix-${{matrix.target}}/runtime
+          mv contrib/completion ./helix-${{matrix.target}}/contrib/completion
+          tar -cJf "helix-${{matrix.target}}-${{env.short_ref}}.tar.xz" helix-${{matrix.target}}
+          # create release if not exist
+          gh release create "${{env.short_ref}}" --prerelease --notes "Nightly build based on https://github.com/${{env.upstream}}/tree/${{env.full_ref}}" --title "${{env.short_ref}}" --repo "${{github.repository}}" || true
+          # delete the asset if exists
+          gh release delete-asset "${{env.short_ref}}" "helix-${{matrix.target}}-${{env.short_ref}}.tar.xz" --yes --repo "${{github.repository}}" || true
+          gh release upload "${{env.short_ref}}" "./helix-${{matrix.target}}-${{env.short_ref}}.tar.xz" --repo "${{github.repository}}"
+          # upload as nightly
+          mv "helix-${{matrix.target}}-${{env.short_ref}}.tar.xz" "helix-${{matrix.target}}.tar.xz"
+          gh release create "nightly" --prerelease --notes "Nightly build" --title "nightly" --repo "${{github.repository}}" || true
+          gh release edit "nightly" --prerelease --notes "Nightly build based on https://github.com/${{env.upstream}}/tree/${{env.full_ref}}" --title "nightly" --repo "${{github.repository}}" || true
+          gh release delete-asset "nightly" "helix-${{matrix.target}}.tar.xz" --yes --repo "${{github.repository}}" || true
+          gh release upload "nightly" "./helix-${{matrix.target}}.tar.xz" --repo "${{github.repository}}"
+
+  manifest:
+    runs-on: ubuntu-latest
+    needs: [filter, build]
+    name: push manifest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@main
+
+      - name: set date
+        run: |
+          echo "date=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+
+      - name: generate manifest
+        env:
+          remote_sha: ${{ needs.filter.outputs.remote_sha }}
+        run: |-
+          mkdir public
+          cat <<EOF > public/manifest.json
+          {
+            "date": "${{ env.date }}",
+            "remote_sha": "${{ env.remote_sha }}"
+          }
+          EOF
+          cat public/manifest.json
+
+      - name: Deploy
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: manifest
+          folder: ./public
+          single-commit: true
+          commit-message: ${{ github.event.head_commit.message }}
