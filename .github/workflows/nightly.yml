@@ -104,9 +104,33 @@ jobs:
           strip = true
           EOF
 
+      - name: Update git version in Cross.toml
+        shell: bash
+        run: |
+          cat > Cross.toml <<EOF
+          [target.aarch64-unknown-linux-gnu]
+          pre-build = ["apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common && add-apt-repository -y ppa:git-core/ppa && apt-get update && apt-get install -y --no-install-recommends git"]
+          [target.aarch64-unknown-linux-musl]
+          pre-build = ["apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common && add-apt-repository -y ppa:git-core/ppa && apt-get update && apt-get install -y --no-install-recommends git"]
+          [target.x86_64-unknown-linux-gnu]
+          pre-build = ["apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common && add-apt-repository -y ppa:git-core/ppa && apt-get update && apt-get install -y --no-install-recommends git"]
+          [target.x86_64-unknown-linux-musl]
+          pre-build = ["apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common && add-apt-repository -y ppa:git-core/ppa && apt-get update && apt-get install -y --no-install-recommends git"]
+          EOF
+          cat Cross.toml
+
+      - name: build grammars (linux)
+        if: runner.os == 'Linux'
+        run: |-
+          ${{ env.CARGO }} run --package=helix-loader --bin=hx-loader --target ${{ matrix.target }}
+
+      - name: build grammars (macOS)
+        if: runner.os == 'macOS'
+        run: |-
+          ${{ env.CARGO }} run --package=helix-loader --bin=hx-loader
+
       - name: Build release binary
         run: |-
-          cargo run --package=helix-loader --bin=hx-loader
           ${{ env.CARGO }} build --release --locked --target ${{ matrix.target }}
           rm -rf runtime/grammars/sources
 
