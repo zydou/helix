@@ -23,9 +23,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - aarch64-unknown-linux-gnu
-          - x86_64-unknown-linux-gnu
+        include:
+          - {target: aarch64-unknown-linux-gnu, platform: arm64}
+          - {target: x86_64-unknown-linux-gnu, platform: amd64}
 
     name: Build ${{matrix.target}}
     runs-on: ubuntu-latest
@@ -56,10 +56,9 @@ jobs:
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64
+          platforms: linux/${{matrix.platform}}
           push: false
           build-args: |
-            VERSION=${{inputs.version}}
             TARGET=${{matrix.target}}
           outputs: type=local,dest=./dist
 

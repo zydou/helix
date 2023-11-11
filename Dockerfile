@@ -1,10 +1,10 @@
 FROM buildpack-deps:xenial AS build
-ARG VERSION=23.10
 ARG TARGET=x86_64-unknown-linux-gnu
 ARG GIT_SSL_NO_VERIFY=true
+ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends software-properties-common gcc-aarch64-linux-gnu && \
+    apt-get install -y --no-install-recommends software-properties-common && \
     add-apt-repository -y ppa:git-core/ppa && \
     apt-get update && \
     apt-get install -y --no-install-recommends git && \
