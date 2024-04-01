@@ -149,18 +149,10 @@ jobs:
           mv "target/${{ matrix.target }}/release/hx" ./helix-${{matrix.target}}/hx
           mv runtime ./helix-${{matrix.target}}/runtime
           mv contrib/completion ./helix-${{matrix.target}}/contrib/completion
-          tar -cJf "helix-${{matrix.target}}-${{env.short_ref}}.tar.xz" helix-${{matrix.target}}
-          # create release if not exist
-          gh release create "${{env.short_ref}}" --prerelease --notes "Nightly build based on https://github.com/${{env.upstream}}/tree/${{env.full_ref}}" --title "${{env.short_ref}}" --repo "${{github.repository}}" || true
-          # delete the asset if exists
-          gh release delete-asset "${{env.short_ref}}" "helix-${{matrix.target}}-${{env.short_ref}}.tar.xz" --yes --repo "${{github.repository}}" || true
-          gh release upload "${{env.short_ref}}" "./helix-${{matrix.target}}-${{env.short_ref}}.tar.xz" --repo "${{github.repository}}"
-          # upload as nightly
-          mv "helix-${{matrix.target}}-${{env.short_ref}}.tar.xz" "helix-${{matrix.target}}.tar.xz"
+          tar -cJf "helix-${{matrix.target}}.tar.xz" helix-${{matrix.target}}
           gh release create "nightly" --prerelease --notes "Nightly build" --title "nightly" --repo "${{github.repository}}" || true
           gh release edit "nightly" --prerelease --notes "Nightly build based on https://github.com/${{env.upstream}}/tree/${{env.full_ref}}" --title "nightly" --repo "${{github.repository}}" || true
-          gh release delete-asset "nightly" "helix-${{matrix.target}}.tar.xz" --yes --repo "${{github.repository}}" || true
-          gh release upload "nightly" "./helix-${{matrix.target}}.tar.xz" --repo "${{github.repository}}"
+          gh release upload "nightly" "./helix-${{matrix.target}}.tar.xz" --repo "${{github.repository}}" --clobber
 
   manifest:
     runs-on: ubuntu-latest
