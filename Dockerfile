@@ -3,12 +3,13 @@ ARG TARGET=x86_64-unknown-linux-gnu
 ARG GIT_SSL_NO_VERIFY=true
 ARG DEBIAN_FRONTEND=noninteractive
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends software-properties-common && \
+    apt-get install -y --no-install-recommends --allow-unauthenticated software-properties-common && \
     add-apt-repository -y ppa:git-core/ppa && \
     apt-get update && \
-    apt-get install -y --no-install-recommends git && \
-    sh -c "$(curl -sSLfk https://sh.rustup.rs)" -- -y --no-modify-path --target "$TARGET"
+    apt-get install -y --no-install-recommends --allow-unauthenticated git && \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sed 's#/proc/self/exe#\/bin\/sh#g' | bash -s -- -y
 
 COPY src /app
 WORKDIR /app
